@@ -16,7 +16,7 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const initComplete = useRef(false);
 
-  // Buildings data - moved outside of checkSession function
+  // Buildings data
   const [buildings] = useState([
     // Academic Zone
     { id: 'CCS', name: 'College of Computer Studies', type: 'academic', color: '#1e40af' },
@@ -59,10 +59,36 @@ export default function App() {
     { id: 'RES', name: 'Research Center', type: 'science', color: '#7c3aed' }
   ]);
 
-  // Enhanced session check with proper error handling
+  // Helper function to create user role entry
+  const createUserRoleEntry = async (userId) => {
+    try {
+      const { error } = await supabase
+        .from('user_roles')
+        .upsert({
+          id: userId,
+          role: 'student',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'id'
+        });
+
+      if (error) {
+        console.warn('Could not create user role entry:', error);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.warn('createUserRoleEntry error:', err);
+      return false;
+    }
+  };
+
+  // Enhanced session check with simplified error handling
   const checkSession = async () => {
     try {
       console.log('🔍 Checking session...');
+      
       const { data: { session }, error } = await supabase.auth.getSession();
       
       if (error) {
@@ -73,7 +99,7 @@ export default function App() {
       }
 
       if (!session?.user) {
-        console.log('👤 No active session');
+        console.log('👤 No active session - showing login');
         setIsLoading(false);
         setCurrentView('login');
         return;
@@ -81,29 +107,19 @@ export default function App() {
 
       console.log('✅ Session found for:', session.user.email);
       
-      // Get user role from database with PROPER error handling
+      // Get user role from database
       let userRole = 'student';
       try {
-        // Use supabase client directly, not fetch API
         const { data: roleData, error: roleError } = await supabase
           .from('user_roles')
           .select('role')
           .eq('id', session.user.id)
-          .maybeSingle(); // Use maybeSingle instead of single to handle no rows
-
-        console.log('Role query result:', { roleData, roleError });
+          .maybeSingle();
 
         if (roleError) {
           console.warn('Role query error:', roleError);
-          
-          // Check if it's a 406 error (table doesn't exist or RLS issue)
-          if (roleError.code === '406' || roleError.message.includes('406')) {
-            console.log('Table or permission issue detected, creating user_roles table if needed');
-            
-            // Try to create table via function call or use service role
-            await createUserRoleEntry(session.user.id);
-            userRole = 'student';
-          }
+          await createUserRoleEntry(session.user.id);
+          userRole = 'student';
         } else if (roleData) {
           userRole = roleData.role || 'student';
         } else {
@@ -147,88 +163,44 @@ export default function App() {
     }
   };
 
-  // Helper function to create user role entry
-  const createUserRoleEntry = async (userId) => {
-    try {
-      // First check if user_roles table exists by trying to insert
-      const { error } = await supabase
-        .from('user_roles')
-        .upsert({
-          id: userId,
-          role: 'student',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        }, {
-          onConflict: 'id'
-        });
-
-      if (error) {
-        console.warn('Could not create user role entry:', error);
-        
-        // If table doesn't exist, we need to create it
-        if (error.code === '42P01' || error.message.includes('does not exist')) {
-          console.log('user_roles table does not exist. Please run the SQL script to create it.');
-          return false;
-        }
-      }
-      return true;
-    } catch (err) {
-      console.warn('createUserRoleEntry error:', err);
-      return false;
-    }
-  };
-
-  // Initialize user_roles table on app start
-  const initializeDatabase = async () => {
-    try {
-      // Try to create user_roles table if it doesn't exist
-      // Remove the RPC call since it doesn't exist
-      console.log('Skipping database function - not needed');
-    } catch (err) {
-      console.log('Database initialization skipped:', err.message);
-    }
-  };
-
   useEffect(() => {
     let mounted = true;
 
-    // Initialize database first
-    initializeDatabase();
-
-    // Quick session check with shorter timeout
-    const timeoutId = setTimeout(() => {
-      if (mounted && isLoading) {
-        console.log('⏰ Session check timeout - checking session state');
-        checkSession();
+    // Immediate session check
+    const initApp = async () => {
+      if (!mounted) return;
+      
+      console.log('🚀 App initializing...');
+      
+      // Show loading for minimum 1 second for better UX
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      if (mounted) {
+        await checkSession();
       }
-    }, 3000);
+    };
 
-    // Initial session check
-    checkSession();
+    initApp();
 
-    // Enhanced auth state listener
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    // Auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       
       console.log('🔄 Auth state changed:', event);
       
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         console.log('👤 User session updated');
-        checkSession();
+        await checkSession();
       } else if (event === 'SIGNED_OUT') {
         console.log('👋 User signed out');
         setUser(null);
         setCurrentView('login');
         setIsLoading(false);
-      } else if (event === 'USER_UPDATED') {
-        console.log('📝 User updated');
-        checkSession();
       }
     });
 
     return () => {
       mounted = false;
-      clearTimeout(timeoutId);
       subscription?.unsubscribe();
     };
   }, []);
@@ -237,11 +209,11 @@ export default function App() {
     setIsLoading(true);
     try {
       await supabase.auth.signOut();
+      setUser(null);
+      setCurrentView('login');
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      setUser(null);
-      setCurrentView('login');
       setIsLoading(false);
     }
   };
@@ -253,12 +225,17 @@ export default function App() {
 
   const handleLoginSuccess = async () => {
     console.log('🔄 Manual login success trigger');
+    setIsLoading(true);
     await checkSession();
   };
 
   // RENDER
   const renderView = () => {
-    if (isLoading) return <Loading />;
+    console.log('🎨 Rendering view:', currentView, 'Loading:', isLoading);
+    
+    if (isLoading) {
+      return <Loading />;
+    }
 
     switch (currentView) {
       case 'login': 
