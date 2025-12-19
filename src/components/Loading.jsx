@@ -35,7 +35,7 @@ const Loading = () => {
         <div className="w-2 h-2 bg-white/60 rounded-full animate-pulse"></div>
       </div>
     </div>
-  );
+  );    
 };
 
 export default Loading;

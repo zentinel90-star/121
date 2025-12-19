@@ -172,9 +172,9 @@ export default function App() {
       
       console.log('🚀 App initializing...');
       
-      // Show loading for minimum 1 second for better UX
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      // Show loading for minimum 300ms for smooth transition
+      await new Promise(resolve => setTimeout(resolve, 0));
+
       if (mounted) {
         await checkSession();
       }
